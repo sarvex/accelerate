@@ -32,10 +32,7 @@ class BulletMenu:
         self.position = 0
         self.choices = choices
         self.prompt = prompt
-        if sys.platform == "win32":
-            self.arrow_char = "*"
-        else:
-            self.arrow_char = "➔ "
+        self.arrow_char = "*" if sys.platform == "win32" else "➔ "
 
     def write_choice(self, index, end: str = ""):
         if sys.platform != "win32":
@@ -59,9 +56,9 @@ class BulletMenu:
             if self.position + 1 >= len(self.choices):
                 return
             self.position += num_spaces
+        elif self.position < 1:
+            return
         else:
-            if self.position - 1 < 0:
-                return
             self.position -= num_spaces
         clear_line()
         self.print_choice(old_position)

@@ -189,12 +189,9 @@ def named_module_tensors(module: nn.Module, include_buffers: bool = True, recurs
         recurse (`bool`, *optional`, defaults to `False`):
             Whether or not to go look in every submodule or just return the direct parameters and buffers.
     """
-    for named_parameter in module.named_parameters(recurse=recurse):
-        yield named_parameter
-
+    yield from module.named_parameters(recurse=recurse)
     if include_buffers:
-        for named_buffer in module.named_buffers(recurse=recurse):
-            yield named_buffer
+        yield from module.named_buffers(recurse=recurse)
 
 
 class FindTiedParametersResult(list):
@@ -208,7 +205,7 @@ class FindTiedParametersResult(list):
 
     def values(self):
         # TODO: at the next Transformers release (4.28.0) issue a deprecation warning here.
-        return sum([x[1:] for x in self], [])
+        return sum((x[1:] for x in self), [])
 
 
 def find_tied_parameters(model: nn.Module, **kwargs):
@@ -246,7 +243,7 @@ def find_tied_parameters(model: nn.Module, **kwargs):
     result = kwargs.get("result", {})
 
     if named_parameters is None:
-        named_parameters = {n: p for n, p in model.named_parameters()}
+        named_parameters = dict(model.named_parameters())
     else:
         # A tied parameter will not be in the full `named_parameters` seen above but will be in the `named_parameters`
         # of the submodule it belongs to. So while recursing we track the names that are not in the initial
@@ -356,10 +353,13 @@ def get_max_layer_size(
     max_size = 0
     layer_names = []
     modules_to_treat = modules.copy()
-    while len(modules_to_treat) > 0:
+    while modules_to_treat:
         module_name, module = modules_to_treat.pop(0)
         modules_children = list(module.named_children()) if isinstance(module, torch.nn.Module) else []
-        if len(modules_children) == 0 or module.__class__.__name__ in no_split_module_classes:
+        if (
+            not modules_children
+            or module.__class__.__name__ in no_split_module_classes
+        ):
             # No splitting this one so we compare to the max_size
             size = module_sizes[module_name]
             if size > max_size:
@@ -400,7 +400,7 @@ def clean_device_map(device_map: Dict[str, Union[int, str, torch.device]], modul
     Cleans a device_map by grouping all submodules that go on the same device together.
     """
     # Get the value of the current module and if there is only one split across several keys, regroup it.
-    prefix = "" if module_name == "" else f"{module_name}."
+    prefix = "" if not module_name else f"{module_name}."
     values = [v for k, v in device_map.items() if k.startswith(prefix)]
     if len(set(values)) == 1 and len(values) > 1:
         for k in [k for k in device_map if k.startswith(prefix)]:
@@ -408,9 +408,13 @@ def clean_device_map(device_map: Dict[str, Union[int, str, torch.device]], modul
         device_map[module_name] = values[0]
 
     # Recurse over the children
-    children_modules = [k for k in device_map.keys() if k.startswith(module_name) and len(k) > len(module_name)]
-    idx = len(module_name.split(".")) + 1 if len(module_name) > 0 else 1
-    children_modules = set(".".join(k.split(".")[:idx]) for k in children_modules)
+    children_modules = [
+        k
+        for k in device_map
+        if k.startswith(module_name) and len(k) > len(module_name)
+    ]
+    idx = len(module_name.split(".")) + 1 if module_name != "" else 1
+    children_modules = {".".join(k.split(".")[:idx]) for k in children_modules}
     for child in children_modules:
         clean_device_map(device_map, module_name=child)
 
@@ -510,16 +514,24 @@ def get_balanced_memory(
 
             if set(no_split_children.keys()) == set(no_split_module_classes):
                 break
-        buffer = max(no_split_children.values()) if len(no_split_children) > 0 else 0
+        buffer = max(no_split_children.values()) if no_split_children else 0
     else:
         buffer = 0
 
     # Compute mean of final modules. In the first dict of module sizes, leaves are the parameters
-    leaves = [n for n in module_sizes if len([p for p in module_sizes if p.startswith(n) and len(p) > len(n)]) == 0]
+    leaves = [
+        n
+        for n in module_sizes
+        if not [p for p in module_sizes if p.startswith(n) and len(p) > len(n)]
+    ]
     module_sizes = {n: v for n, v in module_sizes.items() if n not in leaves}
     # Once removed, leaves are the final modules.
-    leaves = [n for n in module_sizes if len([p for p in module_sizes if p.startswith(n) and len(p) > len(n)]) == 0]
-    mean_leaves = int(sum([module_sizes[n] for n in leaves]) / len(leaves))
+    leaves = [
+        n
+        for n in module_sizes
+        if not [p for p in module_sizes if p.startswith(n) and len(p) > len(n)]
+    ]
+    mean_leaves = int(sum(module_sizes[n] for n in leaves) / len(leaves))
     buffer = int(1.25 * max(buffer, mean_leaves))
     per_gpu += buffer
 
@@ -530,7 +542,11 @@ def get_balanced_memory(
         max_memory[i] = min(0 if low_zero and i == 0 else per_gpu, max_memory[i])
 
     if low_zero:
-        min_zero = max(0, module_sizes[""] - sum([max_memory[i] for i in range(1, num_devices)]))
+        min_zero = max(
+            0,
+            module_sizes[""]
+            - sum(max_memory[i] for i in range(1, num_devices)),
+        )
         max_memory[0] = min(min_zero, max_memory[0])
 
     return max_memory
@@ -590,7 +606,7 @@ def infer_auto_device_map(
         devices.append("disk")
 
     # Devices that need to keep space for a potential offloaded layer.
-    main_devices = [gpus[0], "cpu"] if len(gpus) > 0 else ["cpu"]
+    main_devices = [gpus[0], "cpu"] if gpus else ["cpu"]
 
     module_sizes = compute_module_sizes(model, dtype=dtype, special_dtypes=special_dtypes)
     tied_parameters = find_tied_parameters(model)
@@ -615,7 +631,7 @@ def infer_auto_device_map(
             print(f"\nTreating module {name}.")
         # Max size in the remaining layers may have changed since we took one, so we maybe update it.
         max_layer_names = [n for n in max_layer_names if not n.startswith(name)]
-        if len(max_layer_names) == 0:
+        if not max_layer_names:
             max_layer_size, max_layer_names = get_max_layer_size(
                 [(n, m) for n, m in modules_to_treat if isinstance(m, torch.nn.Module)],
                 module_sizes,
@@ -629,12 +645,19 @@ def infer_auto_device_map(
         tied_param_goups = [
             tied_group
             for tied_group in tied_parameters
-            if any(name in k for k in tied_group) and not all(name in k for k in tied_group)
+            if any(name in k for k in tied_group)
+            and any(name not in k for k in tied_group)
         ]
-        if verbose and len(tied_param_goups) > 0:
+        if verbose and tied_param_goups:
             print(f"  Found the relevant tied param groups {tied_param_goups}")
         # Then we keep track of all the parameters that are tied to the current module, but not in the current module
-        tied_params = sum([[p for p in tied_group if name not in p] for tied_group in tied_param_goups], [])
+        tied_params = sum(
+            (
+                [p for p in tied_group if name not in p]
+                for tied_group in tied_param_goups
+            ),
+            [],
+        )
         if verbose and len(tied_params) > 0:
             print(f"  So those parameters need to be taken into account {tied_params}")
 
@@ -652,7 +675,10 @@ def infer_auto_device_map(
                     f"Not enough space on {devices[current_device]} to put {name} (space available "
                     f"{current_max_size-current_memory_used}, module size {module_size})."
                 )
-            if len(modules_children) == 0 or module.__class__.__name__ in no_split_module_classes:
+            if (
+                not modules_children
+                or module.__class__.__name__ in no_split_module_classes
+            ):
                 # -> no split, we go to the next device
                 if verbose:
                     print("This module cannot be split, going to the next device.")
@@ -672,7 +698,6 @@ def infer_auto_device_map(
                     no_split_module_classes,
                 )
 
-        # Case 2, it fits! We're not entirely out of the wood though, because we may have some tied parameters.
         elif len(tied_params) > 0:
             # First locate all tied modules
             tied_module_names = []
@@ -714,7 +739,11 @@ def infer_auto_device_map(
                 split_happened = False
                 for tied_module_name, tied_module in zip(tied_module_names, tied_modules):
                     tied_module_children = list(tied_module.named_children())
-                    if len(tied_module_children) == 0 or tied_module.__class__.__name__ in no_split_module_classes:
+                    if (
+                        not tied_module_children
+                        or tied_module.__class__.__name__
+                        in no_split_module_classes
+                    ):
                         # can't break this one.
                         continue
 
@@ -765,7 +794,7 @@ def check_device_map(model: nn.Module, device_map: Dict[str, Union[int, str, tor
         device_map (`Dict[str, Union[int, str, torch.device]]`): The device map to check.
     """
     all_model_tensors = [name for name, _ in model.state_dict().items()]
-    for module_name in device_map.keys():
+    for module_name in device_map:
         all_model_tensors = [name for name in all_model_tensors if not name.startswith(module_name)]
     if len(all_model_tensors) > 0:
         non_covered_params = ", ".join(all_model_tensors)
@@ -785,59 +814,57 @@ def load_state_dict(checkpoint_file, device_map=None):
             A map that specifies where each submodule should go. It doesn't need to be refined to each parameter/buffer
             name, once a given module name is inside, every submodule of it will be sent to the same device.
     """
-    if checkpoint_file.endswith(".safetensors"):
-        if not is_safetensors_available():
-            raise ImportError(
-                f"To load {checkpoint_file}, the `safetensors` library is necessary `pip install safetensors`."
-            )
-        with safe_open(checkpoint_file, framework="pt") as f:
-            metadata = f.metadata()
-            weight_names = f.keys()
-
-        if metadata is None:
-            logger.warn(
-                f"The safetensors archive passed at {checkpoint_file} does not contain metadata. "
-                "Make sure to save your model with the `save_pretrained` method. Defaulting to 'pt' metadata."
-            )
-            metadata = {"format": "pt"}
-
-        if metadata.get("format") not in ["pt", "tf", "flax"]:
-            raise OSError(
-                f"The safetensors archive passed at {checkpoint_file} does not contain the valid metadata. Make sure "
-                "you save your model with the `save_pretrained` method."
-            )
-        elif metadata["format"] != "pt":
-            raise ValueError(f"The checkpoint passed was saved with {metadata['format']}, we need a the pt format.")
-        if device_map is None:
-            return safe_load_file(checkpoint_file)
-        else:
-            devices = [device for device in device_map.values() if device not in ["disk"]]
-
-            # if we only have one device we can load everything directly
-            if len(devices) == 1:
-                return safe_load_file(checkpoint_file, device=devices[0])
-
-            # cpu device should always exist as fallback option
-            if "cpu" not in devices:
-                devices.append("cpu")
-
-            # For each device, get the weights that go there
-            device_weights = {device: [] for device in devices}
-            for module_name, device in device_map.items():
-                if device in devices:
-                    device_weights[device].extend([k for k in weight_names if k.startswith(module_name)])
-
-            # all weights that haven't defined a device should be loaded on CPU
-            device_weights["cpu"].extend([k for k in weight_names if k not in sum(device_weights.values(), [])])
-            tensors = {}
-            for device in devices:
-                with safe_open(checkpoint_file, framework="pt", device=device) as f:
-                    for key in device_weights[device]:
-                        tensors[key] = f.get_tensor(key)
-
-            return tensors
-    else:
+    if not checkpoint_file.endswith(".safetensors"):
         return torch.load(checkpoint_file)
+    if not is_safetensors_available():
+        raise ImportError(
+            f"To load {checkpoint_file}, the `safetensors` library is necessary `pip install safetensors`."
+        )
+    with safe_open(checkpoint_file, framework="pt") as f:
+        metadata = f.metadata()
+        weight_names = f.keys()
+
+    if metadata is None:
+        logger.warn(
+            f"The safetensors archive passed at {checkpoint_file} does not contain metadata. "
+            "Make sure to save your model with the `save_pretrained` method. Defaulting to 'pt' metadata."
+        )
+        metadata = {"format": "pt"}
+
+    if metadata.get("format") not in ["pt", "tf", "flax"]:
+        raise OSError(
+            f"The safetensors archive passed at {checkpoint_file} does not contain the valid metadata. Make sure "
+            "you save your model with the `save_pretrained` method."
+        )
+    elif metadata["format"] != "pt":
+        raise ValueError(f"The checkpoint passed was saved with {metadata['format']}, we need a the pt format.")
+    if device_map is None:
+        return safe_load_file(checkpoint_file)
+    devices = [device for device in device_map.values() if device not in ["disk"]]
+
+    # if we only have one device we can load everything directly
+    if len(devices) == 1:
+        return safe_load_file(checkpoint_file, device=devices[0])
+
+    # cpu device should always exist as fallback option
+    if "cpu" not in devices:
+        devices.append("cpu")
+
+    # For each device, get the weights that go there
+    device_weights = {device: [] for device in devices}
+    for module_name, device in device_map.items():
+        if device in devices:
+            device_weights[device].extend([k for k in weight_names if k.startswith(module_name)])
+
+    # all weights that haven't defined a device should be loaded on CPU
+    device_weights["cpu"].extend([k for k in weight_names if k not in sum(device_weights.values(), [])])
+    tensors = {}
+    for device in devices:
+        with safe_open(checkpoint_file, framework="pt", device=device) as f:
+            for key in device_weights[device]:
+                tensors[key] = f.get_tensor(key)
+
+    return tensors
 
 
 def load_checkpoint_in_model(
@@ -903,7 +930,7 @@ def load_checkpoint_in_model(
             checkpoint_files = [checkpoint]
     elif os.path.isdir(checkpoint):
         potential_index = [f for f in os.listdir(checkpoint) if f.endswith(".index.json")]
-        if len(potential_index) == 0:
+        if not potential_index:
             raise ValueError(f"{checkpoint} is not a folder containing a `.index.json` file.")
         elif len(potential_index) == 1:
             index_filename = os.path.join(checkpoint, potential_index[0])

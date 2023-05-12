@@ -181,9 +181,7 @@ def training_function(config, args):
         accelerator.print(f"epoch {epoch}:", eval_metric)
         performance_metric[f"epoch-{epoch}"] = eval_metric["accuracy"]
 
-        if best_performance < eval_metric["accuracy"]:
-            best_performance = eval_metric["accuracy"]
-
+        best_performance = max(best_performance, eval_metric["accuracy"])
     if args.performance_lower_bound is not None:
         assert (
             args.performance_lower_bound <= best_performance

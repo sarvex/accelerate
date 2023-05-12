@@ -66,7 +66,7 @@ def notebook_launcher(function, args=(), num_processes=None, mixed_precision="no
     # Are we in a google colab or a Kaggle Kernel?
     in_colab = False
     in_kaggle = False
-    if any(key.startswith("KAGGLE") for key in os.environ.keys()):
+    if any(key.startswith("KAGGLE") for key in os.environ):
         in_kaggle = True
     elif "IPython" in sys.modules:
         in_colab = "google.colab" in str(sys.modules["IPython"].get_ipython())

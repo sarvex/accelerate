@@ -112,26 +112,27 @@ class GeneralTracker:
     main_process_only = True
 
     def __init__(self, _blank=False):
-        if not _blank:
-            err = ""
-            if not hasattr(self, "name"):
-                err += "`name`"
-            if not hasattr(self, "requires_logging_directory"):
-                if len(err) > 0:
-                    err += ", "
-                err += "`requires_logging_directory`"
+        if _blank:
+            return
+        err = ""
+        if not hasattr(self, "name"):
+            err += "`name`"
+        if not hasattr(self, "requires_logging_directory"):
+            if err != "":
+                err += ", "
+            err += "`requires_logging_directory`"
 
             # as tracker is a @property that relies on post-init
-            if "tracker" not in dir(self):
-                if len(err) > 0:
-                    err += ", "
-                err += "`tracker`"
-            if len(err) > 0:
-                raise NotImplementedError(
-                    f"The implementation for this tracker class is missing the following "
-                    f"required attributes. Please define them in the class definition: "
-                    f"{err}"
-                )
+        if "tracker" not in dir(self):
+            if err != "":
+                err += ", "
+            err += "`tracker`"
+        if err != "":
+            raise NotImplementedError(
+                f"The implementation for this tracker class is missing the following "
+                f"required attributes. Please define them in the class definition: "
+                f"{err}"
+            )
 
     def store_init_configuration(self, values: dict):
         """
@@ -648,11 +649,15 @@ def filter_trackers(
                     if log_type not in loggers:
                         if log_type in get_available_trackers():
                             tracker_init = LOGGER_TYPE_TO_CLASS[str(log_type)]
-                            if getattr(tracker_init, "requires_logging_directory"):
-                                if logging_dir is None:
-                                    raise ValueError(
-                                        f"Logging with `{log_type}` requires a `logging_dir` to be passed in."
-                                    )
+                            if (
+                                getattr(
+                                    tracker_init, "requires_logging_directory"
+                                )
+                                and logging_dir is None
+                            ):
+                                raise ValueError(
+                                    f"Logging with `{log_type}` requires a `logging_dir` to be passed in."
+                                )
                             loggers.append(log_type)
                         else:
                             logger.debug(f"Tried adding logger {log_type}, but package is unavailable in the system.")

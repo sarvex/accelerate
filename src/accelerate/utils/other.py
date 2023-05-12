@@ -128,9 +128,7 @@ def get_pretty_name(obj):
         obj = getattr(obj, "__class__", obj)
     if hasattr(obj, "__qualname__"):
         return obj.__qualname__
-    if hasattr(obj, "__name__"):
-        return obj.__name__
-    return str(obj)
+    return obj.__name__ if hasattr(obj, "__name__") else str(obj)
 
 
 def merge_dicts(source, destination):

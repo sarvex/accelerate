@@ -35,12 +35,11 @@ def get_launch_prefix():
     torch.distributed.run`, etc
     """
     if is_torch_version(">=", "1.10.0"):
-        cmd = ["torchrun"]
+        return ["torchrun"]
     elif is_torch_version(">=", "1.9.0"):
-        cmd = [sys.executable, "-m", "torch.distributed.run"]
+        return [sys.executable, "-m", "torch.distributed.run"]
     else:
-        cmd = [sys.executable, "-m", "torch.distributed.launch", "--use_env"]
-    return cmd
+        return [sys.executable, "-m", "torch.distributed.launch", "--use_env"]
 
 
 def _filter_args(args, parser, default_args=[]):
@@ -49,7 +48,7 @@ def _filter_args(args, parser, default_args=[]):
     """
     new_args, _ = parser.parse_known_args(default_args)
     for key, value in vars(args).items():
-        if key in vars(new_args).keys():
+        if key in vars(new_args):
             setattr(new_args, key, value)
     return new_args
 
@@ -106,9 +105,8 @@ def prepare_simple_launcher_cmd_env(args: argparse.Namespace) -> Tuple[List[str]
 
     current_env["OMP_NUM_THREADS"] = str(args.num_cpu_threads_per_process)
 
-    if args.cpu or args.use_cpu:
-        if args.ipex_enabled:
-            current_env["IPEX_ENABLED"] = str(args.ipex_enabled).lower()
+    if (args.cpu or args.use_cpu) and args.ipex_enabled:
+        current_env["IPEX_ENABLED"] = str(args.ipex_enabled).lower()
 
     return cmd, current_env
 
@@ -180,17 +178,27 @@ def prepare_multi_gpu_env(args: argparse.Namespace) -> Dict[str, str]:
     if args.use_megatron_lm:
         prefix = "MEGATRON_LM_"
         current_env["ACCELERATE_USE_MEGATRON_LM"] = "true"
-        current_env[prefix + "TP_DEGREE"] = str(args.megatron_lm_tp_degree)
-        current_env[prefix + "PP_DEGREE"] = str(args.megatron_lm_pp_degree)
-        current_env[prefix + "GRADIENT_CLIPPING"] = str(args.megatron_lm_gradient_clipping)
+        current_env[f"{prefix}TP_DEGREE"] = str(args.megatron_lm_tp_degree)
+        current_env[f"{prefix}PP_DEGREE"] = str(args.megatron_lm_pp_degree)
+        current_env[f"{prefix}GRADIENT_CLIPPING"] = str(
+            args.megatron_lm_gradient_clipping
+        )
         if args.megatron_lm_num_micro_batches is not None:
-            current_env[prefix + "NUM_MICRO_BATCHES"] = str(args.megatron_lm_num_micro_batches)
+            current_env[f"{prefix}NUM_MICRO_BATCHES"] = str(
+                args.megatron_lm_num_micro_batches
+            )
         if args.megatron_lm_sequence_parallelism is not None:
-            current_env[prefix + "SEQUENCE_PARALLELISM"] = str(args.megatron_lm_sequence_parallelism)
+            current_env[f"{prefix}SEQUENCE_PARALLELISM"] = str(
+                args.megatron_lm_sequence_parallelism
+            )
         if args.megatron_lm_recompute_activations is not None:
-            current_env[prefix + "RECOMPUTE_ACTIVATIONS"] = str(args.megatron_lm_recompute_activations)
+            current_env[f"{prefix}RECOMPUTE_ACTIVATIONS"] = str(
+                args.megatron_lm_recompute_activations
+            )
         if args.megatron_lm_use_distributed_optimizer is not None:
-            current_env[prefix + "USE_DISTRIBUTED_OPTIMIZER"] = str(args.megatron_lm_use_distributed_optimizer)
+            current_env[f"{prefix}USE_DISTRIBUTED_OPTIMIZER"] = str(
+                args.megatron_lm_use_distributed_optimizer
+            )
 
     current_env["OMP_NUM_THREADS"] = str(args.num_cpu_threads_per_process)
     return current_env
@@ -212,8 +220,16 @@ def prepare_deepspeed_cmd_env(args: argparse.Namespace) -> Tuple[List[str], Dict
         setattr(args, "deepspeed_multinode_launcher", DEEPSPEED_MULTINODE_LAUNCHERS[0])
 
     if num_machines > 1 and args.deepspeed_multinode_launcher != DEEPSPEED_MULTINODE_LAUNCHERS[1]:
-        cmd = ["deepspeed", "--no_local_rank"]
-        cmd.extend(["--hostfile", str(args.deepspeed_hostfile), "--launcher", str(args.deepspeed_multinode_launcher)])
+        cmd = [
+            "deepspeed",
+            "--no_local_rank",
+            *[
+                "--hostfile",
+                str(args.deepspeed_hostfile),
+                "--launcher",
+                str(args.deepspeed_multinode_launcher),
+            ],
+        ]
         if args.deepspeed_exclusion_filter is not None:
             cmd.extend(
                 [
@@ -239,7 +255,7 @@ def prepare_deepspeed_cmd_env(args: argparse.Namespace) -> Tuple[List[str], Dict
             cmd.append("--no_python")
         cmd.append(args.training_script)
         cmd.extend(args.training_script_args)
-    elif num_machines > 1 and args.deepspeed_multinode_launcher == DEEPSPEED_MULTINODE_LAUNCHERS[1]:
+    elif num_machines > 1:
         setattr(args, "nproc_per_node", str(num_processes // num_machines))
         setattr(args, "nnodes", str(num_machines))
         setattr(args, "node_rank", int(args.machine_rank))
@@ -315,7 +331,7 @@ def prepare_tpu(
 
 
 def _convert_nargs_to_dict(nargs: List[str]) -> Dict[str, str]:
-    if len(nargs) < 0:
+    if False:
         return {}
     # helper function to infer type for argsparser
 
@@ -323,9 +339,7 @@ def _convert_nargs_to_dict(nargs: List[str]) -> Dict[str, str]:
         try:
             s = float(s)
 
-            if s // 1 == s:
-                return int(s)
-            return s
+            return int(s) if s // 1 == s else s
         except ValueError:
             return s
 

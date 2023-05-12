@@ -132,7 +132,7 @@ def init_on_device(device: torch.device, include_buffers: bool = False):
         nn.Module.register_parameter = register_empty_parameter
         if include_buffers:
             nn.Module.register_buffer = register_empty_buffer
-        for torch_function_name in tensor_constructors_to_patch.keys():
+        for torch_function_name in tensor_constructors_to_patch:
             setattr(torch, torch_function_name, patch_tensor_constructor(getattr(torch, torch_function_name)))
         yield
     finally:
@@ -327,26 +327,29 @@ def dispatch_model(
     check_device_map(model, device_map)
 
     if main_device is None:
-        if set(device_map.values()) == {"cpu"} or set(device_map.values()) == {"cpu", "disk"}:
+        if set(device_map.values()) in [{"cpu"}, {"cpu", "disk"}]:
             main_device = "cpu"
         else:
             main_device = [d for d in device_map.values() if d not in ["cpu", "disk"]][0]
 
     if main_device != "cpu":
         cpu_modules = [name for name, device in device_map.items() if device == "cpu"]
-        if state_dict is None and len(cpu_modules) > 0:
+        if state_dict is None and cpu_modules:
             state_dict = extract_submodules_state_dict(model.state_dict(), cpu_modules)
 
     disk_modules = [name for name, device in device_map.items() if device == "disk"]
-    if offload_dir is None and offload_index is None and len(disk_modules) > 0:
+    if offload_dir is None and offload_index is None and disk_modules:
         raise ValueError(
             "We need an `offload_dir` to dispatch this model according to this `device_map`, the following submodules "
             f"need to be offloaded: {', '.join(disk_modules)}."
         )
     if (
-        len(disk_modules) > 0
+        disk_modules
         and offload_index is None
-        and (not os.path.isdir(offload_dir) or not os.path.isfile(os.path.join(offload_dir, "index.json")))
+        and (
+            not os.path.isdir(offload_dir)
+            or not os.path.isfile(os.path.join(offload_dir, "index.json"))
+        )
     ):
         disk_state_dict = extract_submodules_state_dict(model.state_dict(), disk_modules)
         offload_state_dict(offload_dir, disk_state_dict)
@@ -357,7 +360,7 @@ def dispatch_model(
     execution_device[""] = main_device
     offloaded_devices = ["disk"] if main_device == "cpu" else ["cpu", "disk"]
     offload = {name: device in offloaded_devices for name, device in device_map.items()}
-    save_folder = offload_dir if len(disk_modules) > 0 else None
+    save_folder = offload_dir if disk_modules else None
     if state_dict is not None or save_folder is not None or offload_index is not None:
         device = main_device if offload_index is not None else None
         weights_map = OffloadedWeightsLoader(

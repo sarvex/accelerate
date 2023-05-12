@@ -73,8 +73,7 @@ class KeyHandler(type):
         char = get_character()
         if char != KEYMAP["undefined"]:
             char = ord(char)
-        handler = cls.key_handler.get(char)
-        if handler:
+        if handler := cls.key_handler.get(char):
             cls.current_selection = char
             return handler(cls)
         else:

@@ -86,37 +86,37 @@ class _CustomHelpAction(argparse._HelpAction):
             args = sys.argv[2:]
         else:
             args = sys.argv[1:]
-        opts = parser._actions
-        titles = [
-            "Hardware Selection Arguments",
-            "Resource Selection Arguments",
-            "Training Paradigm Arguments",
-            "positional arguments",
-            "optional arguments",
-        ]
         if len(args) > 1:
             used_platforms = [arg for arg in args if arg in options_to_group.keys()]
             args = list(map(clean_option, args))
             used_titles = [options_to_group[o] for o in used_platforms]
+            opts = parser._actions
+            titles = [
+                "Hardware Selection Arguments",
+                "Resource Selection Arguments",
+                "Training Paradigm Arguments",
+                "positional arguments",
+                "optional arguments",
+            ]
             for i, arg in enumerate(opts):
                 # If the argument's container is outside of the used titles, hide it
                 if arg.container.title not in titles + used_titles:
                     setattr(opts[i], "help", argparse.SUPPRESS)
-                # If the argument is hardware selection, but not being passed, hide it
                 elif arg.container.title == "Hardware Selection Arguments":
                     if set(arg.option_strings).isdisjoint(set(args)):
                         setattr(opts[i], "help", argparse.SUPPRESS)
                     else:
-                        setattr(opts[i], "help", arg.help + " (currently selected)")
-                # If the argument is a training paradigm, but not being passed, hide it
+                        setattr(opts[i], "help", f"{arg.help} (currently selected)")
                 elif arg.container.title == "Training Paradigm Arguments":
                     if set(arg.option_strings).isdisjoint(set(used_platforms)):
                         setattr(opts[i], "help", argparse.SUPPRESS)
                     else:
-                        setattr(opts[i], "help", arg.help + " (currently selected)")
-            for i, group in enumerate(list(parser._action_groups)):
+                        setattr(opts[i], "help", f"{arg.help} (currently selected)")
+            for group in list(parser._action_groups):
                 # If all arguments in the group are hidden, hide the group
-                if all([arg.help == argparse.SUPPRESS for arg in group._group_actions]):
+                if all(
+                    arg.help == argparse.SUPPRESS for arg in group._group_actions
+                ):
                     parser._action_groups.remove(group)
 
         super().__call__(parser, namespace, values, option_string)
@@ -655,12 +655,11 @@ def deepspeed_launcher(args):
             try:
                 distrib_run.run(args)
             except Exception:
-                if is_rich_available() and debug:
-                    console = get_console()
-                    console.print("\n[bold red]Using --debug, `torch.distributed` Stack Trace:[/bold red]")
-                    console.print_exception(suppress=[__file__], show_locals=False)
-                else:
+                if not is_rich_available() or not debug:
                     raise
+                console = get_console()
+                console.print("\n[bold red]Using --debug, `torch.distributed` Stack Trace:[/bold red]")
+                console.print_exception(suppress=[__file__], show_locals=False)
 
 
 def tpu_launcher(args):
@@ -707,11 +706,7 @@ def tpu_pod_launcher(args):
         args, xla_dist.get_args_parser(), ["--tpu", args.tpu_name, "--positional", "", "--restart-tpuvm-pod-server"]
     )
 
-    if args.tpu_use_sudo:
-        new_cmd = ["sudo"]
-    else:
-        new_cmd = []
-
+    new_cmd = ["sudo"] if args.tpu_use_sudo else []
     new_cmd += [
         "accelerate-launch",
         "--tpu",
@@ -745,12 +740,11 @@ def tpu_pod_launcher(args):
     try:
         xla_dist.resolve_and_execute(new_args)
     except Exception:
-        if is_rich_available() and debug:
-            console = get_console()
-            console.print("\n[bold red]Using --debug, `torch_xla.xla_dist` Stack Trace:[/bold red]")
-            console.print_exception(suppress=[__file__], show_locals=False)
-        else:
+        if not is_rich_available() or not debug:
             raise
+        console = get_console()
+        console.print("\n[bold red]Using --debug, `torch_xla.xla_dist` Stack Trace:[/bold red]")
+        console.print_exception(suppress=[__file__], show_locals=False)
 
 
 def sagemaker_launcher(sagemaker_config: SageMakerConfig, args):
@@ -806,11 +800,7 @@ def _validate_launch_command(args):
             args.tpu_use_cluster = defaults.tpu_use_cluster if args.tpu else False
         if not args.mps:
             if args.gpu_ids is None:
-                if defaults.gpu_ids is not None:
-                    args.gpu_ids = defaults.gpu_ids
-                else:
-                    args.gpu_ids = "all"
-
+                args.gpu_ids = defaults.gpu_ids if defaults.gpu_ids is not None else "all"
             if args.multi_gpu and args.num_machines is None:
                 args.num_machines = defaults.num_machines
 
@@ -833,7 +823,7 @@ def _validate_launch_command(args):
                     for k in defaults.fsdp_config:
                         arg_to_set = k
                         if "fsdp" not in arg_to_set:
-                            arg_to_set = "fsdp_" + arg_to_set
+                            arg_to_set = f"fsdp_{arg_to_set}"
                         setattr(args, arg_to_set, defaults.fsdp_config[k])
                     for k in defaults.megatron_lm_config:
                         setattr(args, k, defaults.megatron_lm_config[k])
@@ -898,8 +888,10 @@ def _validate_launch_command(args):
                 )
 
     if any(warned):
-        message = "The following values were not passed to `accelerate launch` and had defaults used instead:\n"
-        message += "\n".join(warned)
+        message = (
+            "The following values were not passed to `accelerate launch` and had defaults used instead:\n"
+            + "\n".join(warned)
+        )
         message += (
             "\nTo avoid this warning pass in values for each of the problematic parameters or run `accelerate config`."
         )

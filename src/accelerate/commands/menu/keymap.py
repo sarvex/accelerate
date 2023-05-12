@@ -66,7 +66,6 @@ def get_raw_chars():
     if os.name == "nt":
         import msvcrt
 
-        encoding = "mbcs"
         # Flush the keyboard buffer
         while msvcrt.kbhit():
             msvcrt.getch()
@@ -93,7 +92,7 @@ def get_raw_chars():
                 except KeyError:
                     ch = ch2[1]
             else:
-                ch = ch.decode(encoding)
+                ch = ch.decode("mbcs")
         else:
             ch = WIN_CH_BUFFER.pop(0)
     elif os.name == "posix":
@@ -118,17 +117,17 @@ def get_character():
 
     elif ord(char) == KEYMAP["esc"]:
         combo = get_raw_chars()
-        if ord(combo) == KEYMAP["mod_int"]:
-            key = get_raw_chars()
-            if ord(key) >= KEYMAP["arrow_begin"] - ARROW_KEY_FLAG and ord(key) <= KEYMAP["arrow_end"] - ARROW_KEY_FLAG:
-                return chr(ord(key) + ARROW_KEY_FLAG)
-            else:
-                return KEYMAP["undefined"]
-        else:
+        if ord(combo) != KEYMAP["mod_int"]:
             return get_raw_chars()
 
+        key = get_raw_chars()
+        return (
+            chr(ord(key) + ARROW_KEY_FLAG)
+            if ord(key) >= KEYMAP["arrow_begin"] - ARROW_KEY_FLAG
+            and ord(key) <= KEYMAP["arrow_end"] - ARROW_KEY_FLAG
+            else KEYMAP["undefined"]
+        )
+    elif char in string.printable:
+        return char
     else:
-        if char in string.printable:
-            return char
-        else:
-            return KEYMAP["undefined"]
+        return KEYMAP["undefined"]

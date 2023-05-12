@@ -38,15 +38,14 @@ def install_xla(upgrade: bool = False):
     if "IPython" in sys.modules:
         in_colab = "google.colab" in str(sys.modules["IPython"].get_ipython())
 
-    if in_colab:
-        if upgrade:
-            torch_install_cmd = ["pip", "install", "-U", "torch"]
-            subprocess.run(torch_install_cmd, check=True)
-        # get the current version of torch
-        torch_version = pkg_resources.get_distribution("torch").version
-        torch_version_trunc = torch_version[: torch_version.rindex(".")]
-        xla_wheel = f"https://storage.googleapis.com/tpu-pytorch/wheels/colab/torch_xla-{torch_version_trunc}-cp37-cp37m-linux_x86_64.whl"
-        xla_install_cmd = ["pip", "install", xla_wheel]
-        subprocess.run(xla_install_cmd, check=True)
-    else:
+    if not in_colab:
         raise RuntimeError("`install_xla` utility works only on google colab.")
+    if upgrade:
+        torch_install_cmd = ["pip", "install", "-U", "torch"]
+        subprocess.run(torch_install_cmd, check=True)
+    # get the current version of torch
+    torch_version = pkg_resources.get_distribution("torch").version
+    torch_version_trunc = torch_version[: torch_version.rindex(".")]
+    xla_wheel = f"https://storage.googleapis.com/tpu-pytorch/wheels/colab/torch_xla-{torch_version_trunc}-cp37-cp37m-linux_x86_64.whl"
+    xla_install_cmd = ["pip", "install", xla_wheel]
+    subprocess.run(xla_install_cmd, check=True)

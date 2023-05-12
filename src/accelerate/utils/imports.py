@@ -99,9 +99,7 @@ def is_bf16_available(ignore_tpu=False):
     if is_tpu_available():
         return not ignore_tpu
     if is_torch_version(">=", "1.10"):
-        if torch.cuda.is_available():
-            return torch.cuda.is_bf16_supported()
-        return True
+        return torch.cuda.is_bf16_supported() if torch.cuda.is_available() else True
     return False
 
 
@@ -176,7 +174,7 @@ def is_mps_available():
 
 def is_ipex_available():
     def get_major_and_minor_from_version(full_version):
-        return str(version.parse(full_version).major) + "." + str(version.parse(full_version).minor)
+        return f"{str(version.parse(full_version).major)}.{str(version.parse(full_version).minor)}"
 
     _torch_version = importlib_metadata.version("torch")
     if importlib.util.find_spec("intel_extension_for_pytorch") is None:

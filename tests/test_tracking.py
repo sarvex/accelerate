@@ -101,13 +101,10 @@ class WandBTrackingTest(TempDirTestCase, MockingTestCase):
         if record:
             pattern = rf"Record: {pattern}"
         cleaned_record = re.findall(pattern, log)[0]
-        # A config
-        if section == "config" or section == "history":
-            cleaned_record = re.findall(r'"([a-zA-Z0-9_.,]+)', cleaned_record)
-            return {key: val for key, val in zip(cleaned_record[0::2], cleaned_record[1::2])}
-        # Everything else
-        else:
+        if section not in {"config", "history"}:
             return dict(re.findall(r'(\w+): "([^\s]+)"', cleaned_record))
+        cleaned_record = re.findall(r'"([a-zA-Z0-9_.,]+)', cleaned_record)
+        return dict(zip(cleaned_record[::2], cleaned_record[1::2]))
 
     @skip
     def test_wandb(self):
@@ -163,15 +160,12 @@ class CometMLTest(unittest.TestCase):
         "Extracts `key` from Comet `log`"
         for log in log_list:
             j = json.loads(log)["payload"]
-            if is_param and "param" in j.keys():
-                if j["param"]["paramName"] == key:
-                    return j["param"]["paramValue"]
-            if "log_other" in j.keys():
-                if j["log_other"]["key"] == key:
-                    return j["log_other"]["val"]
-            if "metric" in j.keys():
-                if j["metric"]["metricName"] == key:
-                    return j["metric"]["metricValue"]
+            if is_param and "param" in j.keys() and j["param"]["paramName"] == key:
+                return j["param"]["paramValue"]
+            if "log_other" in j.keys() and j["log_other"]["key"] == key:
+                return j["log_other"]["val"]
+            if "metric" in j.keys() and j["metric"]["metricName"] == key:
+                return j["metric"]["metricValue"]
 
     def test_init_trackers(self):
         with tempfile.TemporaryDirectory() as d:

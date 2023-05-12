@@ -74,7 +74,4 @@ def has_transformer_engine_layers(model):
     """
     if not is_fp8_available():
         raise ImportError("Using `has_transformer_engine_layers` requires transformer_engine to be installed.")
-    for m in model.modules():
-        if isinstance(m, (te.LayerNorm, te.Linear)):
-            return True
-    return False
+    return any(isinstance(m, (te.LayerNorm, te.Linear)) for m in model.modules())

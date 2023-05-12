@@ -162,12 +162,15 @@ class PartialState:
                 os.environ["LOCAL_RANK"] = str(local_rank)
                 if not os.environ.get("MASTER_PORT", None):
                     os.environ["MASTER_PORT"] = "29500"
-                if not os.environ.get("MASTER_ADDR", None):
-                    if local_size != size and backend != "mpi":
-                        raise ValueError(
-                            "Looks like distributed multinode run but MASTER_ADDR env not set, "
-                            "please try exporting rank 0's hostname as MASTER_ADDR"
-                        )
+                if (
+                    not os.environ.get("MASTER_ADDR", None)
+                    and local_size != size
+                    and backend != "mpi"
+                ):
+                    raise ValueError(
+                        "Looks like distributed multinode run but MASTER_ADDR env not set, "
+                        "please try exporting rank 0's hostname as MASTER_ADDR"
+                    )
                 if not torch.distributed.is_initialized():
                     torch.distributed.init_process_group(backend, rank=rank, world_size=size, **kwargs)
                     self.backend = backend
@@ -185,21 +188,24 @@ class PartialState:
                 if parse_flag_from_env("ACCELERATE_USE_MPS_DEVICE") and not cpu:
                     from .utils import is_torch_version
 
-                    if is_mps_available():
-                        if not is_torch_version(">", "1.12.0"):
-                            warnings.warn(
-                                "We strongly recommend to install PyTorch >= 1.13 for transformer based models."
-                            )
-                        os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
-                        self.device = torch.device("mps")
-                    else:
+                    if not is_mps_available():
                         raise AssertionError(
                             "MPS not available because PyTorch version is < 1.12.0 or MacOS version is < 12.3 "
                             "and/or you do not have an MPS-enabled device on this machine."
                         )
 
+                    if not is_torch_version(">", "1.12.0"):
+                        warnings.warn(
+                            "We strongly recommend to install PyTorch >= 1.13 for transformer based models."
+                        )
+                    os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+                    self.device = torch.device("mps")
                 if self.device is None:
-                    if cpu or not (torch.cuda.is_available() or is_mps_available()):
+                    if (
+                        cpu
+                        or not torch.cuda.is_available()
+                        and not is_mps_available()
+                    ):
                         self.device = torch.device("cpu")
                     elif is_mps_available():
                         os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
@@ -209,13 +215,7 @@ class PartialState:
         self.fork_launched = parse_flag_from_env("FORK_LAUNCHED", 0)
 
     def __repr__(self) -> str:
-        return (
-            f"Distributed environment: {self.distributed_type}{('  Backend: ' + self.backend) if self.backend else ''}\n"
-            f"Num processes: {self.num_processes}\n"
-            f"Process index: {self.process_index}\n"
-            f"Local process index: {self.local_process_index}\n"
-            f"Device: {self.device}\n"
-        )
+        return f"Distributed environment: {self.distributed_type}{f'  Backend: {self.backend}' if self.backend else ''}\nNum processes: {self.num_processes}\nProcess index: {self.process_index}\nLocal process index: {self.local_process_index}\nDevice: {self.device}\n"
 
     @staticmethod
     def _reset_state():
@@ -600,7 +600,7 @@ class AcceleratorState:
         return self._shared_state != PartialState._shared_state
 
     def __repr__(self):
-        repr = PartialState().__repr__() + f"\nMixed precision type: {self.mixed_precision}\n"
+        repr = f"{PartialState().__repr__()}\nMixed precision type: {self.mixed_precision}\n"
         if self.distributed_type == DistributedType.DEEPSPEED:
             repr += f"ds_config: {self.deepspeed_plugin.deepspeed_config}\n"
         return repr

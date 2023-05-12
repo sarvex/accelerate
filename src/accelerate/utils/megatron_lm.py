@@ -128,7 +128,11 @@ def prepare_model(accelerator):
                 "You must provide a `custom_model_provider_function` when using a `custom_prepare_model_function`."
             )
         custom_model_provider_func = accelerator.state.megatron_lm_plugin.custom_model_provider_function
-        model = accelerator.state.megatron_lm_plugin.custom_prepare_model_function(custom_model_provider_func)
+        return (
+            accelerator.state.megatron_lm_plugin.custom_prepare_model_function(
+                custom_model_provider_func
+            )
+        )
     else:
         if args.model_type_name in ("bert", "gpt"):
             model_type = ModelType.encoder_or_decoder
@@ -136,8 +140,7 @@ def prepare_model(accelerator):
             model_type = ModelType.encoder_and_decoder
             if args.pipeline_model_parallel_split_rank is None and args.pipeline_model_parallel_size > 1:
                 args.pipeline_model_parallel_split_rank = args.pipeline_model_parallel_size // 2
-        model = get_model(model_provider_func, model_type)
-    return model
+        return get_model(model_provider_func, model_type)
 
 
 # dataloader utilities
@@ -154,8 +157,7 @@ class MegatronLMDummyDataLoader:
         parser = _add_data_args(parser)
         parser = _add_validation_args(parser)
         data_args = parser.parse_known_args()
-        self.dataset_args = vars(data_args[0])
-        self.dataset_args.update(dataset_kwargs)
+        self.dataset_args = vars(data_args[0]) | dataset_kwargs
         self.dataset_args["megatron_dataset_flag"] = True
 
     def set_megatron_data_args(self):
@@ -185,11 +187,7 @@ class MegatronLMDummyDataLoader:
                     }
                 )
             elif args.model_type_name == "gpt":
-                dataset_args.update(
-                    {
-                        "seq_length": args.seq_length,
-                    }
-                )
+                dataset_args["seq_length"] = args.seq_length
             elif args.model_type_name == "t5":
                 dataset_args.update(
                     {
@@ -237,7 +235,7 @@ class MegatronLMDummyDataLoader:
                 data_sharding=args.data_sharding,
             )
         else:
-            raise Exception("{} dataloader type is not supported.".format(args.dataloader_type))
+            raise Exception(f"{args.dataloader_type} dataloader type is not supported.")
 
         # Torch dataloader.
         return torch.utils.data.DataLoader(
@@ -247,8 +245,7 @@ class MegatronLMDummyDataLoader:
     def build_train_valid_test_data_iterators(self):
         def cyclic_iter(iter):
             while True:
-                for x in iter:
-                    yield x
+                yield from iter
 
         args = get_args()
 
@@ -260,11 +257,14 @@ class MegatronLMDummyDataLoader:
         if args.iteration > 0 and args.consumed_train_samples == 0:
             assert args.train_samples is None, "only backward compatiblity support for iteration-based training"
             args.consumed_train_samples = args.iteration * args.global_batch_size
-        if args.iteration > 0 and args.consumed_valid_samples == 0:
-            if args.train_samples is None:
-                args.consumed_valid_samples = (
-                    (args.iteration // args.eval_interval) * args.eval_iters * args.global_batch_size
-                )
+        if (
+            args.iteration > 0
+            and args.consumed_valid_samples == 0
+            and args.train_samples is None
+        ):
+            args.consumed_valid_samples = (
+                (args.iteration // args.eval_interval) * args.eval_iters * args.global_batch_size
+            )
 
         # Data loader only on rank 0 of each model parallel group.
         if mpu.get_tensor_model_parallel_rank() == 0:
@@ -406,8 +406,9 @@ class MegatronLMOptimizerWrapper(AcceleratedOptimizer):
 def prepare_optimizer(accelerator, model):
     accelerator.print("Preparing optimizer")
     args = get_args()
-    optimizer = get_megatron_optimizer(model, args.no_wd_decay_cond, args.scale_lr_cond, args.lr_mult)
-    return optimizer
+    return get_megatron_optimizer(
+        model, args.no_wd_decay_cond, args.scale_lr_cond, args.lr_mult
+    )
 
 
 # scheduler utilities
@@ -492,10 +493,7 @@ class BertTrainStep(AbstractTrainStep):
             datatype = torch.int64
 
             # Broadcast data.
-            if data_iterator is not None:
-                data = next(data_iterator)
-            else:
-                data = None
+            data = next(data_iterator) if data_iterator is not None else None
             data_b = mpu.broadcast_data(keys, data, datatype)
 
             # Unpack.
@@ -516,10 +514,7 @@ class BertTrainStep(AbstractTrainStep):
             # Unpack.
             tokens = data["input_ids"].long()
             padding_mask = data["attention_mask"].long()
-            if "token_type_ids" in data:
-                types = data["token_type_ids"].long()
-            else:
-                types = None
+            types = data["token_type_ids"].long() if "token_type_ids" in data else None
             if "labels" in data:
                 lm_labels = data["labels"].long()
                 loss_mask = (data["labels"] != -100).to(torch.float)
@@ -533,10 +528,7 @@ class BertTrainStep(AbstractTrainStep):
 
             return tokens, types, sentence_order, loss_mask, lm_labels, padding_mask
 
-        if megatron_dataset_flag:
-            return get_batch_megatron
-        else:
-            return get_batch_transformer
+        return get_batch_megatron if megatron_dataset_flag else get_batch_transformer
 
     def get_loss_func(self, pretraining_flag, num_labels):
         def loss_func_pretrain(loss_mask, sentence_order, output_tensor):
@@ -572,10 +564,7 @@ class BertTrainStep(AbstractTrainStep):
             averaged_losses = average_losses_across_data_parallel_group([loss])
             return loss, {"loss": averaged_losses[0]}
 
-        if pretraining_flag:
-            return loss_func_pretrain
-        else:
-            return loss_func_finetune
+        return loss_func_pretrain if pretraining_flag else loss_func_finetune
 
     def get_forward_step_func(self, pretraining_flag, bert_binary_head):
         def forward_step(data_iterator, model):
@@ -627,10 +616,7 @@ class GPTTrainStep(AbstractTrainStep):
             datatype = torch.int64
 
             # Broadcast data.
-            if data_iterator is not None:
-                data = next(data_iterator)
-            else:
-                data = None
+            data = next(data_iterator) if data_iterator is not None else None
             data_b = mpu.broadcast_data(keys, data, datatype)
 
             # Unpack.
@@ -661,10 +647,7 @@ class GPTTrainStep(AbstractTrainStep):
             )
             return tokens, labels, loss_mask, attention_mask, position_ids
 
-        if megatron_dataset_flag:
-            return get_batch_megatron
-        else:
-            return get_batch_transformer
+        return get_batch_megatron if megatron_dataset_flag else get_batch_transformer
 
     def get_loss_func(self):
         args = get_args()
@@ -683,7 +666,7 @@ class GPTTrainStep(AbstractTrainStep):
 
             output_dict = {"lm loss": averaged_loss[0]}
             if args.return_logits:
-                output_dict.update({"logits": logits})
+                output_dict["logits"] = logits
             return loss, output_dict
 
         return loss_func
@@ -713,10 +696,7 @@ class T5TrainStep(AbstractTrainStep):
         self.get_batch = self.get_batch_func(args.megatron_dataset_flag)
         self.loss_func = self.get_loss_func()
         self.forward_step = self.get_forward_step_func()
-        if not args.model_return_dict:
-            self.model_output_class = None
-        else:
-            self.model_output_class = Seq2SeqLMOutput
+        self.model_output_class = Seq2SeqLMOutput if args.model_return_dict else None
 
     @staticmethod
     def attn_mask_postprocess(attention_mask):
@@ -727,9 +707,7 @@ class T5TrainStep(AbstractTrainStep):
         attention_mask_bs1 = attention_mask.unsqueeze(2)
         # [b, s, s]
         attention_mask_bss = attention_mask_b1s * attention_mask_bs1
-        # Convert attention mask to binary:
-        extended_attention_mask = attention_mask_bss < 0.5
-        return extended_attention_mask
+        return attention_mask_bss < 0.5
 
     @staticmethod
     def get_decoder_mask(seq_length, device):
@@ -746,8 +724,7 @@ class T5TrainStep(AbstractTrainStep):
         # [b, s, 1]
         attention_mask_bs1 = torch.ones((batch_size, dec_seq_length, 1), device=device)
         attention_mask_bss = attention_mask_bs1 * attention_mask_b1s
-        extended_attention_mask = attention_mask_bss < 0.5
-        return extended_attention_mask
+        return attention_mask_bss < 0.5
 
     def get_batch_func(self, megatron_dataset_flag):
         def get_batch_megatron(data_iterator):
@@ -757,10 +734,7 @@ class T5TrainStep(AbstractTrainStep):
             datatype = torch.int64
 
             # Broadcast data.
-            if data_iterator is not None:
-                data = next(data_iterator)
-            else:
-                data = None
+            data = next(data_iterator) if data_iterator is not None else None
             data_b = mpu.broadcast_data(keys, data, datatype)
 
             # Unpack.
@@ -798,10 +772,7 @@ class T5TrainStep(AbstractTrainStep):
 
             return tokens_enc, tokens_dec, loss_mask, labels, enc_mask, dec_mask, enc_dec_mask
 
-        if megatron_dataset_flag:
-            return get_batch_megatron
-        else:
-            return get_batch_transformer
+        return get_batch_megatron if megatron_dataset_flag else get_batch_transformer
 
     def get_loss_func(self):
         def loss_func(loss_mask, output_tensor):
@@ -842,15 +813,14 @@ def initialize(accelerator, extra_args_provider=None, args_defaults={}):
 
     # Set defaults
     for key, value in args_defaults.items():
-        if getattr(args, key, None) is not None:
-            if args.rank == 0:
-                print(
-                    "WARNING: overriding default arguments for {key}:{v} \
+        if getattr(args, key, None) is not None and args.rank == 0:
+            print(
+                "WARNING: overriding default arguments for {key}:{v} \
                         with {key}:{v2}".format(
-                        key=key, v=getattr(args, key), v2=value
-                    ),
-                    flush=True,
-                )
+                    key=key, v=getattr(args, key), v2=value
+                ),
+                flush=True,
+            )
         setattr(args, key, value)
 
     if args.use_checkpoint_args or args_defaults.get("use_checkpoint_args", False):
@@ -909,10 +879,11 @@ def initialize(accelerator, extra_args_provider=None, args_defaults={}):
     set_jit_fusion_options()
     args = get_args()
     args.padded_vocab_size = _vocab_size_with_padding(args.orig_vocab_size, args)
-    if args.model_type_name == "bert" and args.pretraining_flag and args.num_labels == 2:
-        args.bert_binary_head = True
-    else:
-        args.bert_binary_head = False
+    args.bert_binary_head = bool(
+        args.model_type_name == "bert"
+        and args.pretraining_flag
+        and args.num_labels == 2
+    )
     args.iteration = 0
 
 
@@ -976,27 +947,31 @@ class MegatronEngine(torch.nn.Module):
         args = get_args()
         timers = get_timers()
 
-        if len(batch_data) > 0:
+        if batch_data:
             data_chunks = []
             if args.num_micro_batches > 1:
-                for i in range(0, args.num_micro_batches):
-                    data_chunks.append(
-                        {
-                            k: v[i * args.micro_batch_size : (i + 1) * args.micro_batch_size]
-                            for k, v in batch_data.items()
-                        }
-                    )
+                data_chunks.extend(
+                    {
+                        k: v[
+                            i
+                            * args.micro_batch_size : (i + 1)
+                            * args.micro_batch_size
+                        ]
+                        for k, v in batch_data.items()
+                    }
+                    for i in range(0, args.num_micro_batches)
+                )
             else:
                 data_chunks = [batch_data]
 
         if len(self.module) > 1:
             batch_data_iterator = (
                 [iter(data_chunks) for _ in range(len(self.module))]
-                if len(batch_data) > 0
+                if batch_data
                 else [None] * len(self.module)
             )
         else:
-            batch_data_iterator = iter(data_chunks) if len(batch_data) > 0 else None
+            batch_data_iterator = iter(data_chunks) if batch_data else None
 
         # Set grad to zero.
         if args.DDP_impl == "local" and args.use_contiguous_buffers_in_local_ddp:
@@ -1077,10 +1052,15 @@ class MegatronEngine(torch.nn.Module):
         args = get_args()
         data_chunks = []
         if args.num_micro_batches > 1:
-            for i in range(0, args.num_micro_batches):
-                data_chunks.append(
-                    {k: v[i * args.micro_batch_size : (i + 1) * args.micro_batch_size] for k, v in batch_data.items()}
-                )
+            data_chunks.extend(
+                {
+                    k: v[
+                        i * args.micro_batch_size : (i + 1) * args.micro_batch_size
+                    ]
+                    for k, v in batch_data.items()
+                }
+                for i in range(0, args.num_micro_batches)
+            )
         else:
             data_chunks = [batch_data]
 
@@ -1105,18 +1085,18 @@ class MegatronEngine(torch.nn.Module):
             mpu.get_data_parallel_world_size() * args.micro_batch_size * get_num_microbatches()
         )
 
-        if mpu.is_pipeline_last_stage(ignore_virtual=True):
-            # Average loss across microbatches.
-            loss_reduced = {}
-            for key in loss_dicts[0]:
-                losses_reduced_for_key = [x[key] for x in loss_dicts]
-                if len(losses_reduced_for_key[0].shape) == 0:
-                    loss_reduced[key] = sum(losses_reduced_for_key) / len(losses_reduced_for_key)
-                else:
-                    loss_reduced[key] = torch.concat(losses_reduced_for_key)
-            return loss_reduced
-        else:
+        if not mpu.is_pipeline_last_stage(ignore_virtual=True):
             return {}
+        # Average loss across microbatches.
+        loss_reduced = {}
+        for key in loss_dicts[0]:
+            losses_reduced_for_key = [x[key] for x in loss_dicts]
+            loss_reduced[key] = (
+                sum(losses_reduced_for_key) / len(losses_reduced_for_key)
+                if len(losses_reduced_for_key[0].shape) == 0
+                else torch.concat(losses_reduced_for_key)
+            )
+        return loss_reduced
 
     def forward(self, **batch_data):
         # During training, we use train_step()
@@ -1140,9 +1120,7 @@ class MegatronEngine(torch.nn.Module):
             if args.tensorboard_dir is not None:
                 # Logging.
                 loss_scale = self.optimizer.get_loss_scale().item()
-                params_norm = None
-                if args.log_params_norm:
-                    params_norm = calc_params_l2_norm(self.model)
+                params_norm = calc_params_l2_norm(self.model) if args.log_params_norm else None
                 self.report_memory_flag = training_log(
                     loss_dict,
                     self.total_loss_dict,
@@ -1162,18 +1140,20 @@ class MegatronEngine(torch.nn.Module):
                     self.eval_total_loss_dict[key] = (
                         self.eval_total_loss_dict.get(key, torch.cuda.FloatTensor([0.0])) + loss_dict[key]
                     )
-                    self.eval_total_loss_dict[key + "_num_iters"] = self.eval_total_loss_dict.get(
-                        key + "_num_iters", torch.cuda.FloatTensor([0.0])
-                    ) + torch.cuda.FloatTensor([1.0])
+                    self.eval_total_loss_dict[
+                        f"{key}_num_iters"
+                    ] = self.eval_total_loss_dict.get(
+                        f"{key}_num_iters", torch.cuda.FloatTensor([0.0])
+                    ) + torch.cuda.FloatTensor(
+                        [1.0]
+                    )
 
         loss = torch.tensor(0.0, device=args.local_rank)
         for key in loss_dict:
             if len(loss_dict[key].shape) == 0:
                 loss += loss_dict[key]
 
-        logits = None
-        if "logits" in loss_dict:
-            logits = loss_dict["logits"]
+        logits = loss_dict["logits"] if "logits" in loss_dict else None
         # loss = reduce(loss)
         if self.train_step_handler.model_output_class is not None:
             return self.train_step_handler.model_output_class(loss=loss, logits=logits)
@@ -1189,7 +1169,10 @@ class MegatronEngine(torch.nn.Module):
         for key in self.eval_total_loss_dict:
             if key.endswith("_num_iters"):
                 continue
-            value = self.eval_total_loss_dict[key] / self.eval_total_loss_dict[key + "_num_iters"]
+            value = (
+                self.eval_total_loss_dict[key]
+                / self.eval_total_loss_dict[f"{key}_num_iters"]
+            )
             string += f"{key} value: {value} | "
             ppl = math.exp(min(20, value.item()))
             if args.pretraining_flag:
@@ -1320,9 +1303,8 @@ class MegatronEngine(torch.nn.Module):
         tokenizer = get_tokenizer()
 
         stop_token = kwargs.get("stop_token", tokenizer.eod)
-        if stop_token is not None:
-            if not isinstance(stop_token, int):
-                raise ValueError("stop_token must be an integer")
+        if stop_token is not None and not isinstance(stop_token, int):
+            raise ValueError("stop_token must be an integer")
 
         if length_penalty is None:
             length_penalty = 1.0

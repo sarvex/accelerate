@@ -140,32 +140,30 @@ def get_sagemaker_input():
     if is_custom_docker_image:
         docker_image = _ask_field("Enter your Docker image: ", lambda x: str(x).lower())
 
-    is_sagemaker_inputs_enabled = _ask_field(
+    if is_sagemaker_inputs_enabled := _ask_field(
         "Do you want to provide SageMaker input channels with data locations? [yes/NO]: ",
         _convert_yes_no_to_bool,
         default=False,
         error_message="Please enter yes or no.",
-    )
-    sagemaker_inputs_file = None
-    if is_sagemaker_inputs_enabled:
+    ):
         sagemaker_inputs_file = _ask_field(
             "Enter the path to the SageMaker inputs TSV file with columns (channel_name, data_location): ",
             lambda x: str(x).lower(),
         )
-
-    is_sagemaker_metrics_enabled = _ask_field(
+    else:
+        sagemaker_inputs_file = None
+    if is_sagemaker_metrics_enabled := _ask_field(
         "Do you want to enable SageMaker metrics? [yes/NO]: ",
         _convert_yes_no_to_bool,
         default=False,
         error_message="Please enter yes or no.",
-    )
-    sagemaker_metrics_file = None
-    if is_sagemaker_metrics_enabled:
+    ):
         sagemaker_metrics_file = _ask_field(
             "Enter the path to the SageMaker metrics TSV file with columns (metric_name, metric_regex): ",
             lambda x: str(x).lower(),
         )
-
+    else:
+        sagemaker_metrics_file = None
     distributed_type = _ask_options(
         "What is the distributed mode?",
         ["No distributed training", "Data parallelism"],
@@ -180,33 +178,31 @@ def get_sagemaker_input():
     )
     if use_dynamo:
         prefix = "dynamo_"
-        dynamo_config[prefix + "backend"] = _ask_options(
+        dynamo_config[f"{prefix}backend"] = _ask_options(
             "Which dynamo backend would you like to use?",
             [x.lower() for x in DYNAMO_BACKENDS],
             _convert_dynamo_backend,
             default=2,
         )
-        use_custom_options = _ask_field(
+        if use_custom_options := _ask_field(
             "Do you want to customize the defaults sent to torch.compile? [yes/NO]: ",
             _convert_yes_no_to_bool,
             default=False,
             error_message="Please enter yes or no.",
-        )
-
-        if use_custom_options:
-            dynamo_config[prefix + "mode"] = _ask_options(
+        ):
+            dynamo_config[f"{prefix}mode"] = _ask_options(
                 "Which mode do you want to use?",
                 TORCH_DYNAMO_MODES,
                 lambda x: TORCH_DYNAMO_MODES[int(x)],
                 default="default",
             )
-            dynamo_config[prefix + "use_fullgraph"] = _ask_field(
+            dynamo_config[f"{prefix}use_fullgraph"] = _ask_field(
                 "Do you want the fullgraph mode or it is ok to break model into several subgraphs? [yes/NO]: ",
                 _convert_yes_no_to_bool,
                 default=False,
                 error_message="Please enter yes or no.",
             )
-            dynamo_config[prefix + "use_dynamic"] = _ask_field(
+            dynamo_config[f"{prefix}use_dynamic"] = _ask_field(
                 "Do you want to enable dynamic shape tracing? [yes/NO]: ",
                 _convert_yes_no_to_bool,
                 default=False,

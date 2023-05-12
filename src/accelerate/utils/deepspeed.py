@@ -51,7 +51,7 @@ class HfDeepSpeedConfig:
             try:
                 config_decoded = base64.urlsafe_b64decode(config_file_or_dict).decode("utf-8")
                 config = json.loads(config_decoded)
-            except (UnicodeDecodeError, AttributeError, ValueError):
+            except (AttributeError, ValueError):
                 raise ValueError(
                     f"Expected a string path to an existing deepspeed config, or a dictionary, or a base64 encoded string. Received: {config_file_or_dict}"
                 )
@@ -69,13 +69,11 @@ class HfDeepSpeedConfig:
         # offload
         self._offload = False
         if self.is_zero2() or self.is_zero3():
-            offload_devices_valid = set(["cpu", "nvme"])
-            offload_devices = set(
-                [
-                    self.get_value("zero_optimization.offload_optimizer.device"),
-                    self.get_value("zero_optimization.offload_param.device"),
-                ]
-            )
+            offload_devices_valid = {"cpu", "nvme"}
+            offload_devices = {
+                self.get_value("zero_optimization.offload_optimizer.device"),
+                self.get_value("zero_optimization.offload_param.device"),
+            }
             if len(offload_devices & offload_devices_valid) > 0:
                 self._offload = True
 
@@ -97,9 +95,7 @@ class HfDeepSpeedConfig:
         Returns the set value or `default` if no value is set
         """
         config, ds_key = self.find_config_node(ds_key_long)
-        if config is None:
-            return default
-        return config.get(ds_key, default)
+        return default if config is None else config.get(ds_key, default)
 
     def del_config_sub_tree(self, ds_key_long, must_exist=False):
         """
@@ -201,9 +197,7 @@ class DeepSpeedOptimizerWrapper(AcceleratedOptimizer):
     @property
     def step_was_skipped(self):
         """Whether or not the optimizer step was done, or skipped because of gradient overflow."""
-        if self.__has_overflow__:
-            return self.optimizer.overflow
-        return False
+        return self.optimizer.overflow if self.__has_overflow__ else False
 
 
 class DeepSpeedSchedulerWrapper(AcceleratedScheduler):

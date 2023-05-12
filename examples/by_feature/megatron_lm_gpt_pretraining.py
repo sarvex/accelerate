@@ -222,16 +222,14 @@ def parse_args():
     )
     args = parser.parse_args()
 
-    # Sanity checks
     if args.dataset_name is None and args.train_file is None and args.validation_file is None:
         raise ValueError("Need either a dataset name or a training/validation file.")
-    else:
-        if args.train_file is not None:
-            extension = args.train_file.split(".")[-1]
-            assert extension in ["csv", "json", "txt"], "`train_file` should be a csv, json or txt file."
-        if args.validation_file is not None:
-            extension = args.validation_file.split(".")[-1]
-            assert extension in ["csv", "json", "txt"], "`validation_file` should be a csv, json or txt file."
+    if args.train_file is not None:
+        extension = args.train_file.split(".")[-1]
+        assert extension in ["csv", "json", "txt"], "`train_file` should be a csv, json or txt file."
+    if args.validation_file is not None:
+        extension = args.validation_file.split(".")[-1]
+        assert extension in ["csv", "json", "txt"], "`validation_file` should be a csv, json or txt file."
 
     if args.push_to_hub:
         assert args.output_dir is not None, "Need an `output_dir` to create a repo when `--push_to_hub` is passed."

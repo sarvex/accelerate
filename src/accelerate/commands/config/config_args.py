@@ -41,16 +41,15 @@ else:
 
 
 def load_config_from_file(config_file):
-    if config_file is not None:
-        if not os.path.isfile(config_file):
-            raise FileNotFoundError(
-                f"The passed configuration file `{config_file}` does not exist. "
-                "Please pass an existing file to `accelerate launch`, or use the the default one "
-                "created through `accelerate config` and run `accelerate launch` "
-                "without the `--config_file` argument."
-            )
-    else:
+    if config_file is None:
         config_file = default_config_file
+    elif not os.path.isfile(config_file):
+        raise FileNotFoundError(
+            f"The passed configuration file `{config_file}` does not exist. "
+            "Please pass an existing file to `accelerate launch`, or use the the default one "
+            "created through `accelerate config` and run `accelerate launch` "
+            "without the `--config_file` argument."
+        )
     with open(config_file, "r", encoding="utf-8") as f:
         if config_file.endswith(".json"):
             if (
@@ -87,8 +86,7 @@ class BaseConfig:
                 result[key] = value.value
             if isinstance(value, dict) and not bool(value):
                 result[key] = None
-        result = {k: v for k, v in result.items() if v is not None}
-        return result
+        return {k: v for k, v in result.items() if v is not None}
 
     @classmethod
     def from_json_file(cls, json_file=None):

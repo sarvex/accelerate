@@ -32,5 +32,4 @@ def parse_flag_from_env(key, default=False):
 
 
 def parse_choice_from_env(key, default="no"):
-    value = os.environ.get(key, str(default))
-    return value
+    return os.environ.get(key, str(default))

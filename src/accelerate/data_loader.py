@@ -86,7 +86,7 @@ _PYTORCH_DATALOADER_ADDITIONAL_KWARGS = {
 
 for v, additional_kwargs in _PYTORCH_DATALOADER_ADDITIONAL_KWARGS.items():
     if is_torch_version(">=", v):
-        _PYTORCH_DATALOADER_KWARGS.update(additional_kwargs)
+        _PYTORCH_DATALOADER_KWARGS |= additional_kwargs
 
 
 class BatchSamplerShard(BatchSampler):
@@ -182,16 +182,14 @@ class BatchSamplerShard(BatchSampler):
                 # If the batch is full, we yield the part of it this process is responsible of.
                 yield batch[batch_length * self.process_index : batch_length * (self.process_index + 1)]
 
-        # If drop_last is True of the last batch was full, iteration is over, otherwise...
         if not self.drop_last and len(initial_data) > 0 and len(batch) < self.batch_size:
-            if not self.even_batches:
-                if len(batch) > batch_length * self.process_index:
-                    yield batch[batch_length * self.process_index : batch_length * (self.process_index + 1)]
-            else:
+            if self.even_batches:
                 # For degenerate cases where the dataset has less than num_process * batch_size samples
                 while len(initial_data) < self.batch_size:
                     initial_data += initial_data
                 batch = batch + initial_data
+                yield batch[batch_length * self.process_index : batch_length * (self.process_index + 1)]
+            elif len(batch) > batch_length * self.process_index:
                 yield batch[batch_length * self.process_index : batch_length * (self.process_index + 1)]
 
     def _iter_with_no_split(self):
@@ -211,12 +209,8 @@ class BatchSamplerShard(BatchSampler):
                 yield batch_to_yield
                 batch_to_yield = []
 
-        # If drop_last is True, iteration is over, otherwise...
         if not self.drop_last and len(initial_data) > 0:
-            if not self.even_batches:
-                if len(batch_to_yield) > 0:
-                    yield batch_to_yield
-            else:
+            if self.even_batches:
                 # ... we yield the complete batch we had saved before if it has the proper length
                 if len(batch_to_yield) == self.batch_size:
                     yield batch_to_yield
@@ -240,6 +234,9 @@ class BatchSamplerShard(BatchSampler):
                     cycle_index = end_index
                     batch = []
                     idx += 1
+
+            elif len(batch_to_yield) > 0:
+                yield batch_to_yield
 
 
 class IterableDatasetShard(IterableDataset):
@@ -473,11 +470,7 @@ class DataLoaderDispatcher(DataLoader):
                     # One batch of the main iterator is dispatched and split.
                     batch = next(iterator)
                 else:
-                    # num_processes batches of the main iterator are concatenated then dispatched and split.
-                    # We add the batches one by one so we have the remainder available when drop_last=False.
-                    batches = []
-                    for _ in range(self.state.num_processes):
-                        batches.append(next(iterator))
+                    batches = [next(iterator) for _ in range(self.state.num_processes)]
                     batch = concatenate(batches, dim=0)
                 # In both cases, we need to get the structure of the batch that we will broadcast on other
                 # processes to initialize the tensors with the right shape.
@@ -490,23 +483,18 @@ class DataLoaderDispatcher(DataLoader):
         # This is inplace, so after this instruction, every process has the same `batch_info` as process 0.
         broadcast_object_list(batch_info)
         self._stop_iteration = batch_info[1]
-        if self._stop_iteration:
-            # If drop_last is False and split_batches is False, we may have a remainder to take care of.
-            if not self.split_batches and not self._drop_last:
-                if self.state.process_index == 0 and len(batches) > 0:
-                    batch = concatenate(batches, dim=0)
-                    batch_info = [get_data_structure(batch), False]
-                else:
-                    batch_info = [None, True]
-                broadcast_object_list(batch_info)
+        if self._stop_iteration and not self.split_batches and not self._drop_last:
+            if self.state.process_index == 0 and len(batches) > 0:
+                batch = concatenate(batches, dim=0)
+                batch_info = [get_data_structure(batch), False]
+            else:
+                batch_info = [None, True]
+            broadcast_object_list(batch_info)
         return batch, batch_info
 
     def __iter__(self):
         self.gradient_state._add_dataloader(self)
-        main_iterator = None
-        if self.state.process_index == 0:
-            # We only iterate through the DataLoader on process 0.
-            main_iterator = super().__iter__()
+        main_iterator = super().__iter__() if self.state.process_index == 0 else None
         stop_iteration = False
         self._stop_iteration = False
         first_batch = None
@@ -869,11 +857,10 @@ def skip_first_batches(dataloader, num_batches=0):
             synchronized_generator=dataloader.synchronized_generator,
             **kwargs,
         )
+    elif new_batch_sampler is None:
+        # Need to manually skip batches in the dataloader
+        dataloader = SkipDataLoader(dataset, skip_batches=num_batches, **kwargs)
     else:
-        if new_batch_sampler is None:
-            # Need to manually skip batches in the dataloader
-            dataloader = SkipDataLoader(dataset, skip_batches=num_batches, **kwargs)
-        else:
-            dataloader = DataLoader(dataset, batch_sampler=new_batch_sampler, **kwargs)
+        dataloader = DataLoader(dataset, batch_sampler=new_batch_sampler, **kwargs)
 
     return dataloader

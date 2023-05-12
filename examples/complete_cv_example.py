@@ -112,8 +112,7 @@ def training_function(config, args):
 
     # Build the label correspondences
     all_labels = [extract_label(fname) for fname in file_names]
-    id_to_label = list(set(all_labels))
-    id_to_label.sort()
+    id_to_label = sorted(set(all_labels))
     label_to_id = {lbl: i for i, lbl in enumerate(id_to_label)}
 
     # Set the seed before splitting the data.
